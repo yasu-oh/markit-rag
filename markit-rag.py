@@ -1,12 +1,35 @@
 import argparse
 import sys
 import re
+import datetime
 from pathlib import Path
 from tqdm import tqdm
 from markitdown import MarkItDown
 
 
 _STRICT_NAN_SNIPPETS = ["| NaN |", "|  NaN  |", "| NAN |", "| nan |"]
+
+
+def add_metadata_frontmatter(md_text: str, src_path: Path) -> str:
+    """
+    ベクトルDBでの追跡を容易にするため、ファイルの先頭にYAML Frontmatterを追加する。
+    """
+    now = datetime.datetime.now().isoformat()
+    frontmatter = (
+        "---\n"
+        f"filename: {src_path.name}\n"
+        f"converted_at: {now}\n"
+        "---\n\n"
+    )
+    return frontmatter + md_text
+
+
+def ensure_header_spacing(md_text: str) -> str:
+    """
+    チャンキング精度向上のため、ヘッダー (#) の前に必ず空行を挿入する。
+    """
+    # 行頭の # の前に空行がない場合、空行を挿入（先頭行を除く）
+    return re.sub(r'([^\n])\n(#{1,6}\s)', r'\1\n\n\2', md_text)
 
 
 def iter_files(root: Path):
@@ -22,16 +45,28 @@ def normalize_markdown(md_text: str) -> str:
     if not md_text:
         return md_text
 
+    # 連続する空白を1つにまとめる
+    md = collapse_spaces(md_text)
     # NaNセルを空セルに置換
-    md = replace_nan_cells(md_text)
+    md = replace_nan_cells(md)
     # 空行を削除
     md = remove_empty_lines(md)
     # 末尾の空白セルを削除
     md = remove_trailing_empty_cells(md)
     # 3回以上の連続改行を2回改行に変換
     md = normalize_line_breaks(md)
+    # チャンキング向上のためヘッダー前後の空行を調整
+    md = ensure_header_spacing(md)
 
     return md
+
+
+def collapse_spaces(md_text: str) -> str:
+    """
+    全角空白やタブなどのあらゆる空白文字を半角空白に変換し、
+    連続する空白を一つの半角空白にまとめる（改行は維持）。
+    """
+    return re.sub(r'[^\S\r\n]+', ' ', md_text)
 
 
 def replace_nan_cells(md_text: str) -> str:
@@ -136,6 +171,8 @@ def main():
 
             md_text = convert_with_markitdown(md_engine, src)
             md_text = normalize_markdown(md_text)
+            md_text = add_metadata_frontmatter(md_text, src)
+            md_text = ensure_header_spacing(md_text)
 
             with open(dest, "w", encoding="utf-8", newline="\n") as f:
                 f.write(md_text)
